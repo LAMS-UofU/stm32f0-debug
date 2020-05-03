@@ -1,0 +1,40 @@
+#include "main.h"
+#include "stm32f0xx_it.h"
+
+extern volatile uint8_t lidar_timer;
+
+/******************************************************************************/
+/*           Cortex-M0 Processor Interruption and Exception Handlers          */ 
+/******************************************************************************/
+/**
+  * @brief This function handles Non maskable interrupt.
+  */
+void NMI_Handler(void) {}
+
+	
+/**
+  * @brief This function handles Hard fault interrupt.
+  */
+void HardFault_Handler(void) { while (1); }
+
+
+/**
+  * @brief This function handles System service call via SWI instruction.
+  */
+void SVC_Handler(void) {}
+
+	
+/**
+  * @brief This function handles Pendable request for system service.
+  */
+void PendSV_Handler(void) {}
+
+	
+/**
+  * @brief This function handles System tick timer.
+  */
+void SysTick_Handler(void) { 
+	HAL_IncTick();
+	if (lidar_timer > 0)
+		lidar_timer--;
+}
