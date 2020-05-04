@@ -1,6 +1,14 @@
+/**
+	* Servo control
+	* 
+	* @file  : servo.c
+	* @author: Kris Wolff
+	*/
+
 #include "servo.h"
 
 
+/* Specs for SPT5435LV-180 servo */
 #define FREQUENCY 330
 #define MINIMUM_us 500
 #define MAXIMUM_us 2500
@@ -8,6 +16,11 @@
 #define SERVO_ARR 3030
 
 
+
+/**
+	*	Initialize Servo PWM connection using TIM3 CH1 on GPIO pin PB4
+	* @return None
+	*/
 void SERVO_init(void) 
 {
 	__HAL_RCC_TIM3_CLK_ENABLE();
@@ -46,6 +59,14 @@ void SERVO_init(void)
 	SERVO_set_angle(0);
 }
 
+
+
+/**
+	*	Set duty cycle of servo's PWM signal in order for servo to spin arm at
+	* specified angle
+	* @param int: angle to spin arm of servo
+	* @return None
+	*/
 void SERVO_set_angle(int angle)
 {
 	TIM3->CCR1 = MINIMUM_us + (angle * (MAXIMUM_us - MINIMUM_us)) / 180.0;

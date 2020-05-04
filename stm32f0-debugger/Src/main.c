@@ -1,18 +1,16 @@
 /**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-*/
+	* Entry point for Application
+	*
+	*	@file  : main.c
+	* @author: Kris Wolff
+	*/
 
 #include <string.h>
-
 #include "main.h"
 #include "servo.h"
 #include "usart.h"
 #include "usb_debug.h"
 #include "lidar.h"
-
 
 
 void reset_command(void);
@@ -23,64 +21,44 @@ void COMMAND_help(void);
 
 void SystemClock_Config(void);
 
-
-
 extern struct usb_message command;
 extern int buffer_current_size;
 
 
-
-
 /**
-  * @brief  The application entry point.
-  * @retval int
+  * Application entry point.
+  * @return int
   */
 int main(void)
 {
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick */
   HAL_Init();
   /* Configure the system clock */
   SystemClock_Config();
 
-	// PB4 for servo PWM (signal)
-	SERVO_init();
-	// PB6 (TX) and PB7 (RX) for USB serial connection
-  USB_init();
-	// PB10 (TX) and PB11 (RX) for LIDAR serial connection
-	LIDAR_init();
+	LIDAR_init(); /* RPLIDAR A2M8 -- PB3 (PWM), PB10 (TX), PB11 (RX) */
+	SERVO_init(); /* SPT5435LV-180 servo -- PB4 (PWM)) */
+  USB_init(); 	/* COM3 -- BR: 115200 */
 	
 	while (1)
   {
-		USB_process(USB_check());
+		USB_process();
 		LIDAR_process();
-		
-		/* Testing servo
-		int i;
-		for (i=0; i<=180; i++) {
-			SERVO_set_angle(i);
-			HAL_Delay(100);
-		}
-		for (i=180; i>=0; i--) {
-			SERVO_set_angle(i);
-			HAL_Delay(100);
-		}
-		*/
   }
 }
 
 
 
 /**
-  * @brief System Clock Configuration
-  * @retval None
+  * System Clock Configuration
+  * @return None
   */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** Initializes the CPU, AHB and APB busses clocks 
-  */
+  /* Initializes the CPU, AHB and APB busses clocks */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -89,8 +67,7 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  /** Initializes the CPU, AHB and APB busses clocks 
-  */
+  /* Initializes the CPU, AHB and APB busses clocks */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
@@ -105,25 +82,23 @@ void SystemClock_Config(void)
 
 
 /**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
+  * Executed in case of error occurrence.
+  * @return None
   */
 void Error_Handler(void) {}
 
 #ifdef  USE_FULL_ASSERT
 /**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
+  * Reports the name of the source file and the source line number where the 
+	* assert_param error has occurred.
   * @param  file: pointer to the source file name
   * @param  line: assert_param error line source number
-  * @retval None
+  * @return None
   */
 void assert_failed(char *file, uint32_t line)
 { 
-  /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
 }
 #endif
 	

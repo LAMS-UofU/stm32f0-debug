@@ -1,8 +1,17 @@
-/**	NOTE: requests are in little endian order
+/**	
+	* Core LiDAR commands for the RPLIDAR A2M8 defined here. This specific 
+	* sensor has multiple possible requests with their individual responses.
+	* Processing to determine which request is given, which response needs to
+	* be used are determined in @see LIDAR_process which should be called in
+	* the infinite loop in main. 
+	* <p>
+	* Multiple #define statements at top are based on the RPLIDAR A2M8 device
+	* along with commonly used bytes used throughout.
 	*
+	* @file  : lidar.c
+	* @author: Kris Wolff
 	*/
 	
-
 #include <stdio.h>
 #include "lidar.h"
 #include "usb_debug.h"
@@ -11,10 +20,10 @@
 #define MAX_PRINT_BUFFER_SIZE		256
 #define MAX_RESPONSE_SIZE				1080
 
-#define LIDAR_FREQUENCY 	25000 // Hz
+#define LIDAR_FREQUENCY 	25000
 #define LIDAR_PSC 				16
 #define LIDAR_ARR 				20
-#define LIDAR_DUTY_CYCLE 	60   	// %
+#define LIDAR_DUTY_CYCLE 	60 
 
 #define LIDAR_BAUD_RATE 115200
 
@@ -31,45 +40,67 @@
 #define LIDAR_SEND_MODE_SINGLE_RES	0x0
 #define LIDAR_SEND_MODE_MULTI_RES		0x1
 
+#define LIDAR_RESP_DESC_SIZE 7
 
 
-extern volatile char lidar_received_value;
-extern volatile int lidar_newData_flag;
 
-volatile uint8_t lidar_timer;
-volatile uint8_t lidar_timing;
-volatile uint8_t lidar_scanning;
-
-volatile unsigned char lidar_request;
-uint32_t byte_count;
-
-static char print_buffer[MAX_PRINT_BUFFER_SIZE];
-
-#define RESP_DESC_SIZE 7
-/**	start1        - 1 byte (0xA5)
-	* start2        - 1 byte (0x5A)
-	*	response_info - 32 bits ([32:30] send_mode, [29:0] data_length)
-	*	data_type 		- 1 byte	*/
+/* start1        - 1 byte (0xA5)
+	 start2        - 1 byte (0x5A)
+	 response_info - 32 bits ([32:30] send_mode, [29:0] data_length)
+	 data_type 		 - 1 byte	*/
 struct response_descriptor {
 	uint8_t start1;
 	uint8_t start2;
 	uint32_t response_info;
 	uint8_t data_type;
-};
-struct response_descriptor resp_desc;
+} resp_desc;
 
-char DATA_RESPONSE[MAX_RESPONSE_SIZE];
+/* Buffer for priting */
+static char print_buffer[MAX_PRINT_BUFFER_SIZE];
+
+/* Populated from USART3_4_IRQHandler, processed in LIDAR_process */
+extern volatile char lidar_received_value;
+extern volatile int lidar_newData_flag;
+
+/* For "STOP" and "RESET" commands requiring waiting specific times before another
+	 request is allowed */
+volatile uint8_t lidar_timer;
+volatile uint8_t lidar_timing;
+
+/* Preserved value of which request was given until new request is sent */
+uint8_t lidar_request;
+
+/* Number of bytes received for processing LiDAR responses */
+static uint32_t byte_count;
+
+/* Preserve response bytes */
+static char DATA_RESPONSE[MAX_RESPONSE_SIZE];
 
 
 
+/** 
+	* Initialize LiDAR connection through USART3 and PWM connection using GPIO 
+	* pins PB3 (PWM), PB10 (TX) and PB11 (RX).
+	* @see USART3_init
+	* @see LIDAR_PWM_init	
+	* @see USART3_4_IRQHandler
+	* @return None
+	*/
 void LIDAR_init(void)
 {
-	USART3_init(LIDAR_BAUD_RATE);
 	LIDAR_PWM_init();
+	USART3_init(LIDAR_BAUD_RATE);
+	LIDAR_REQ_reset();
 }
 
 
 
+/**
+	*	Send message to LiDAR through USART connection.
+	* @param char*: string to send
+	* @see USART3_transmit_string
+	*	@return None
+	*/
 void LIDAR_send(char* message)
 {
 	USART3_transmit_string(message);
@@ -78,10 +109,15 @@ void LIDAR_send(char* message)
 
 
 
+/**
+	*	Check and process any incoming data from LiDAR.
+	* @return None
+	*/
 void LIDAR_process(void)
 {
 	unsigned data_idx;
 	
+	/* STOP and RESET requests */
 	if (!lidar_timer && lidar_timing) {
 		switch(lidar_request) {
 			case LIDAR_REQ_STOP:
@@ -93,14 +129,14 @@ void LIDAR_process(void)
 		};
 		return;
 	}
-			
-	// No new data
+	
+	/* No new data */
 	if (!lidar_newData_flag)
 		return;
 	
 	lidar_newData_flag = 0;
 	
-	/** Process response descriptor */
+	/* Process response descriptor */
 	switch (byte_count) {
 		case 0:
 			resp_desc.start1 = lidar_received_value;
@@ -132,12 +168,12 @@ void LIDAR_process(void)
 			return;
 		
 		default:		 
-			data_idx = byte_count - RESP_DESC_SIZE;
+			data_idx = byte_count - LIDAR_RESP_DESC_SIZE;
 			DATA_RESPONSE[data_idx] = lidar_received_value; 
 			byte_count++;
 	};
 	
-	if (byte_count == (resp_desc.response_info & 0x3FFFFFFF) + RESP_DESC_SIZE) {
+	if (byte_count == (resp_desc.response_info & 0x3FFFFFFF) + LIDAR_RESP_DESC_SIZE) {
 		switch(lidar_request) {
 			case  LIDAR_REQ_SCAN:
 				LIDAR_RES_scan();
@@ -169,6 +205,10 @@ void LIDAR_process(void)
 
 
 
+/** 
+	*	Resets local print buffer.
+	*	@return None
+	*/
 void LIDAR_reset_print_buffer(void)
 {
 	int i;
@@ -178,6 +218,10 @@ void LIDAR_reset_print_buffer(void)
 
 
 
+/**
+	*	Resets response descriptor for new incoming responses.
+	*	@return None
+	*/
 void LIDAR_reset_response_descriptor(void)
 {
 	resp_desc.start1 = 0;
@@ -188,7 +232,11 @@ void LIDAR_reset_response_descriptor(void)
 
 
 
-// channel 2
+/**
+	* Initializes LiDAR PWM connection using TIM2 CH2 on GPIO pin PB3. 
+	* Requirement for LiDAR is to use internal pulldown resistor!
+	*	@return None
+	*/
 void LIDAR_PWM_init(void)
 {
 	__HAL_RCC_TIM2_CLK_ENABLE();
@@ -227,29 +275,41 @@ void LIDAR_PWM_init(void)
 
 
 
+/**
+	*	Sets LiDAR's PWM signal's duty cycle to @ref LIDAR_DUTY_CYCLE.
+	* @return None
+	*/
 void LIDAR_PWM_start(void)
 {
-	/* Set duty cycle */
 	TIM2->CCR2 = (LIDAR_DUTY_CYCLE * LIDAR_ARR) / 100.0;
 }
 
 
 
+/**
+	* Stops LiDAR's PWM signal's by setting duty cycle to 0.
+	* @return None
+	*/
 void LIDAR_PWM_stop(void)
 {
-	/* Set duty cycle */
 	TIM2->CCR2 = 0;
 }
 
 
-/**	Request LiDAR to exit scanning state and enter idle state. No response!
+/**	
+	* Request LiDAR to exit scanning state and enter idle state. No response!
 	* Need to wait at least 1 millisecond before sending another request.
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_STOP (0x25)				*/
+	*									+1		LIDAR_REQ_STOP (0x25)
+	* @see SysTick_Handler
+	* @return None
+	*/
 void LIDAR_REQ_stop(void)
 {
 	lidar_request = LIDAR_REQ_STOP;
 	byte_count = 0;
+	lidar_newData_flag = 0;
+	lidar_received_value = 0;
 	
 	LIDAR_reset_print_buffer();
 	USB_reset_command();
@@ -257,18 +317,22 @@ void LIDAR_REQ_stop(void)
 					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_STOP);
 	LIDAR_send(print_buffer);
 	
-	/** Wait 1 ms. Decrementing in @ref SysTick_Handler every 1 ms */
+	/** Wait 1 ms. Decrementing in @see SysTick_Handler every 1 ms */
 	lidar_timer = 1;
 	lidar_timing = 1;
 }
 
 
 
-/** Request LiDAR to reset (reboot) itself by sending this request. State 
+/** 
+	* Request LiDAR to reset (reboot) itself by sending this request. State 
 	* similar to as it LiDAR had just powered up. No response! Need to wait at
 	* least 2 milliseconds before sending another request.
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_RESET (0x40)				*/
+	*									+1		LIDAR_REQ_RESET (0x40)
+	* @see SysTick_Handler
+	* @return None
+	*/
 void LIDAR_REQ_reset(void)
 {
 	lidar_request = LIDAR_REQ_RESET;
@@ -280,22 +344,23 @@ void LIDAR_REQ_reset(void)
 					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_RESET);
 	LIDAR_send(print_buffer);
 	
-	/** Wait 2 ms. Decrementing in @ref SysTick_Handler every 1 ms */
+	/** Wait 2 ms. Decrementing in @see SysTick_Handler every 1 ms */
 	lidar_timer = 2;
 	lidar_timing = 1;
 }
 
 
-/** Request LiDAR to enter scanning state and start receiving measurements.
+/** 
+	* Request LiDAR to enter scanning state and start receiving measurements.
 	* Note: RPLIDAR A2 and other device models support 4khz sampling rate will 
 	* lower the sampling rate when processing this request. Please use EXPRESS_SCAN 
 	* for the best performance.
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_SCAN (0x20)				*/
+	*									+1		LIDAR_REQ_SCAN (0x20)
+	*	@return None
+	*/
 void LIDAR_REQ_scan(void)
 {
-	// Send GET_SAMPLERATE to get info about single measurement sampling time  
-	
 	lidar_request = LIDAR_REQ_SCAN;
 	byte_count = 0;
 	
@@ -303,13 +368,12 @@ void LIDAR_REQ_scan(void)
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
 					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_SCAN);
 	LIDAR_send(print_buffer);
-	
-	lidar_scanning = 1;
 }
 
 
 
-/** Request LiDAR to enter scanning state and start receiving measurements.
+/** 
+	* Request LiDAR to enter scanning state and start receiving measurements.
 	* Different from SCAN request as this will make LiDAR work at the sampling 
 	* rate as high as it can be.  For RPLIDAR A2 and the device models support 
 	* 4khz sampling rate, the host system is required to send this request to 
@@ -323,11 +387,11 @@ void LIDAR_REQ_scan(void)
 	*									+3		reserved_field (set to 0)
 	*									+4		reserved_field (set to 0)
 	*									+5		reserved_field (set to 0)
-	*									+6		reserved_field (set to 0)		*/
+	*									+6		reserved_field (set to 0)		
+	* @return None
+	*/
 void LIDAR_REQ_express_scan(void)
 {
-	// Send GET_SAMPLERATE to get info about single measurement sampling time  
-	
 	lidar_request = LIDAR_REQ_EXPRESS_SCAN;
 	byte_count = 0;
 	
@@ -335,16 +399,17 @@ void LIDAR_REQ_express_scan(void)
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
 					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_EXPRESS_SCAN);
 	LIDAR_send(print_buffer);
-	
-	lidar_scanning = 1;
 }
 
 
 
-/** Request LiDAR to forcefully start measurement sampling and send out the 
+/** 
+	* Request LiDAR to forcefully start measurement sampling and send out the 
 	* results immediately. Useful for device debugging.	
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_FORCE_SCAN (0x21)		*/
+	*									+1		LIDAR_REQ_FORCE_SCAN (0x21)		
+	* @return None
+	*/
 void LIDAR_REQ_force_scan(void)
 {
 	lidar_request = LIDAR_REQ_FORCE_SCAN;
@@ -354,15 +419,16 @@ void LIDAR_REQ_force_scan(void)
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
 					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_FORCE_SCAN);
 	LIDAR_send(print_buffer);
-	
-	lidar_scanning = 1;
 }
 
 
 
-/** Request LiDAR to send device information.
+/** 
+	* Request LiDAR to send device information.
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_GET_INFO (0x50)		*/
+	*									+1		LIDAR_REQ_GET_INFO (0x50)
+	* @return None
+	*/
 void LIDAR_REQ_get_info(void)
 {
 	lidar_request = LIDAR_REQ_GET_INFO;
@@ -376,10 +442,13 @@ void LIDAR_REQ_get_info(void)
 
 
 
-/** Request LiDAR health state. If it has entered the Protection Stop state 
+/** 
+	* Request LiDAR health state. If it has entered the Protection Stop state 
 	* caused by hardware failure, relate code of the failure will be sent out.
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_GET_HEALTH (0x52)		*/
+	*									+1		LIDAR_REQ_GET_HEALTH (0x52)
+	* @return None
+	*/
 void LIDAR_REQ_get_health(void)
 {
 	lidar_request = LIDAR_REQ_GET_HEALTH;
@@ -393,10 +462,13 @@ void LIDAR_REQ_get_health(void)
 
 
 
-/** Request LiDAR to send single measurement duration for scan mode and express 
+/** 
+	* Request LiDAR to send single measurement duration for scan mode and express 
 	*	scan mode. 
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_GET_SAMPLERATE (0x59)		*/
+	*									+1		LIDAR_REQ_GET_SAMPLERATE (0x59)
+	* @return None
+	*/
 void LIDAR_REQ_get_samplerate(void)
 {
 	lidar_request = LIDAR_REQ_GET_SAMPLERATE;
@@ -410,49 +482,58 @@ void LIDAR_REQ_get_samplerate(void)
 
 
 
-/** "STOP" request has no response. Instead using @ref SysTick_Handler to wait 
-	* 1 ms with precision. */
+/** 
+	* "STOP" request has no response. Instead using @see SysTick_Handler to wait 
+	* 1 ms with precision. 
+	* @return None
+	*/
 void LIDAR_RES_stop(void) 
 {
 	if (!lidar_timer) {
 		byte_count = 0;
 		lidar_timing = 0;
-		USB_send("DONE\r\nCMD?");
+		USB_send("LiDAR stopped\r\nCMD?");
 	}
 }
 	
-/** "RESET" request has no response. Instead using @ref SysTick_Handler to wait 
-	* 2 ms with precision. */
+/** 
+	* "RESET" request has no response. Instead using @see SysTick_Handler to wait 
+	* 2 ms with precision. 
+	* @return None
+	*/
 void LIDAR_RES_reset(void) 
 {
 	if (!lidar_timer) {
 		byte_count = 0;
 		lidar_timing = 0;
-		USB_send("DONE\r\nCMD?");
+		USB_send("LiDAR reset\r\nCMD?");
 	}
 }
 	
 
 
-/** Process "SCAN" request's response
+/** 
+	* Process "SCAN" request's response
 	*		Byte Offset:	+0		quality, ~start, start
-	*		Order 8->0		+1		angle[6:0], check
+	*		Order 8..0		+1		angle[6:0], check
 	*									+2		angle_q6[14:7]
 	*									+3		distance_q2[7:0]
-	*									+4		distance_q2[15:8]		*/
+	*									+4		distance_q2[15:8]
+	* @return None
+	*/
 void LIDAR_RES_scan(void) 
 {
 	LIDAR_reset_print_buffer();
 	
-	uint16_t angle = ((uint16_t)DATA_RESPONSE[1] >> 1) + 
-											((uint16_t)DATA_RESPONSE[2] << 7);
-	uint16_t distance = DATA_RESPONSE[3] + ((uint16_t)DATA_RESPONSE[4] << 8);
-	/** check[0] - start
-		* check[1] - ~start
-		* check[2] - check		*/
+	/* check[0] - start
+		 check[1] - ~start
+		 check[2] - check	 */
 	uint8_t check = ((DATA_RESPONSE[0] & 0x3) << 1) | (DATA_RESPONSE[1] & 0x1);
+	uint16_t angle = ((uint16_t)DATA_RESPONSE[1] >> 1) + 
+									 ((uint16_t)DATA_RESPONSE[2] << 7);
+	uint16_t distance = DATA_RESPONSE[3] + ((uint16_t)DATA_RESPONSE[4] << 8);
 	
-	/* Rewrite these specific bytes */
+	/* Decrement byte_count so next scan rewrites same DATA_RESPONSE bytes */
 	byte_count -= 5;
 	
 	/* Checking: check=1, ~start=0, start=1 */
@@ -460,27 +541,40 @@ void LIDAR_RES_scan(void)
 		snprintf(	print_buffer, MAX_PRINT_BUFFER_SIZE,
 							"{\"Q\":%u,\"A\":%u,\"D\":%u}\r\n",
 							DATA_RESPONSE[0] >> 2, angle, distance);
+		USB_send(print_buffer);
 	}
+	
+	/* Prints invalid responses...not all responses are supposed to valid, so no
+		 need to print these except for debugging
 	else {
 		snprintf( print_buffer, MAX_PRINT_BUFFER_SIZE,
 							"Invalid response: C=%u, !S=%u, S=%u\r\n",
 							(check >> 3), ((check >> 2) & 0x1), (check & 0x1));
-	}
-		
-	USB_send(print_buffer);
+		USB_send(print_buffer);
+	} */
 }
 
 
 
-void LIDAR_RES_express_scan(void) {}
+/** 
+	* Process "EXPRESS_SCAN" request's response
+	* @return None
+	*/
+void LIDAR_RES_express_scan(void) 
+{ /* TODO */ }
+
+
+/** 
+	* Process "FORCE_SCAN" request's response
+	* @return None
+	*/
+void LIDAR_RES_force_scan(void) 
+{ /* TODO */ }
 
 
 
-void LIDAR_RES_force_scan(void) {}
-
-
-
-/**	Process "GET_INFO" request's response
+/**	
+	* Process "GET_INFO" request's response
 	*		Byte Offset:	+0		model
 	*		Order 8->0		+1		firmware_minor
 	*									+2		firware_major
@@ -488,8 +582,10 @@ void LIDAR_RES_force_scan(void) {}
 	*									+4		serial_number[0]
 	*														 ...
 	*									+19 	serial_number[15]		
-	*		NOTE: when converting serial_number to text from hex, the least significant byte 
-	*		prints first*/
+	* When converting serial_number to text from hex, the least significant byte 
+	*	prints first.
+	* @return None
+	*/
 void LIDAR_RES_get_info(void) 
 {
 	USB_send("DONE\r\n");
@@ -529,10 +625,13 @@ void LIDAR_RES_get_info(void)
 
 
 
-/**	Process "GET_HEALTH" request's response
+/**	
+	* Process "GET_HEALTH" request's response
 	*		Byte Offset:	+0		status
 	*		Order 8->0		+1		error_code[7:0]
-	*									+2		error_code[15:8]	*/
+	*									+2		error_code[15:8]	
+	* @return None
+	*/
 void LIDAR_RES_get_health(void) 
 {
 	USB_send("DONE\r\n");
@@ -563,11 +662,14 @@ void LIDAR_RES_get_health(void)
 }
 
 
-/**	Process "GET_SAMPLERATE" request's response
+/**	
+	* Process "GET_SAMPLERATE" request's response
 	*		Byte Offset:	+0		Tstandard[7:0]
 	*		Order 8->0		+1		Tstandard[15:8]
 	*									+2		Texpress[7:0]
-	*									+3		Texpress[15:8]	*/
+	*									+3		Texpress[15:8]	
+	* @return None
+	*/
 void LIDAR_RES_get_samplerate(void)
 {
 	USB_send("DONE\r\n");

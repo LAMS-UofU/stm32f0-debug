@@ -1,11 +1,23 @@
+/**
+	*	Cortex-M0 Processor Interruption and Exception Handlers
+	*
+	* @file  : stm32f0xx_it.c
+	* @author: Kris Wolff
+	*
+	* @attention Copyright (c) 2020 STMicroelectronics. All rights reserved.
+	* This software component is licensed by ST under BSD 3-Clause license,
+  * the "License"; You may not use this file except in compliance with the
+  * License. You may obtain a copy of the License at:
+  *                        opensource.org/licenses/BSD-3-Clause
+	*/
+	
 #include "main.h"
 #include "stm32f0xx_it.h"
 
+
 extern volatile uint8_t lidar_timer;
 
-/******************************************************************************/
-/*           Cortex-M0 Processor Interruption and Exception Handlers          */ 
-/******************************************************************************/
+
 /**
   * @brief This function handles Non maskable interrupt.
   */
@@ -19,19 +31,22 @@ void HardFault_Handler(void) { while (1); }
 
 
 /**
-  * @brief This function handles System service call via SWI instruction.
+  * Handles System service call via SWI instruction.
+	* @return None
   */
 void SVC_Handler(void) {}
 
 	
 /**
-  * @brief This function handles Pendable request for system service.
-  */
+  * Handles Pendable request for system service.
+  * @return None
+	*/
 void PendSV_Handler(void) {}
 
 	
 /**
-  * @brief This function handles System tick timer.
+  * Handles System tick timer.
+	* @return None
   */
 void SysTick_Handler(void) { 
 	HAL_IncTick();
