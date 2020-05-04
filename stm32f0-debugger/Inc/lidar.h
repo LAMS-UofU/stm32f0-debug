@@ -24,7 +24,6 @@ void LIDAR_RES_stop(void);
 void LIDAR_RES_reset(void);
 void LIDAR_RES_scan(void);
 void LIDAR_RES_express_scan(void);
-void LIDAR_RES_force_scan(void);
 void LIDAR_RES_get_info(void);
 void LIDAR_RES_get_health(void);
 void LIDAR_RES_get_samplerate(void);

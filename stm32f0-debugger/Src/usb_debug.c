@@ -390,7 +390,9 @@ void USB_COMMAND_lidar(void)
 		snprintf(	print_buffer, MAX_PRINT_BUFFER_SIZE,
 							"Requesting LiDAR express scan...\r\n");
 		USB_send(print_buffer);
-		LIDAR_REQ_express_scan();
+		/** @bug in LiDAR express scan */
+		USB_send("FAILED: internal error\r\n"); 
+		// LIDAR_REQ_express_scan();
 	}
 	else if (!strcmp(command.payload, LIDAR_LIST[6])) {
 		snprintf(	print_buffer, MAX_PRINT_BUFFER_SIZE,

@@ -13,6 +13,7 @@
 	*/
 	
 #include <stdio.h>
+#include <string.h>
 #include "lidar.h"
 #include "usb_debug.h"
 
@@ -27,7 +28,8 @@
 
 #define LIDAR_BAUD_RATE 115200
 
-#define LIDAR_REQ_START_BIT				0xA5
+#define LIDAR_START_BYTE					0xA5
+#define LIDAR_RES_BYTE						0x5A
 #define LIDAR_REQ_STOP 				 		0x25
 #define LIDAR_REQ_RESET 			 		0x40
 #define LIDAR_REQ_SCAN				 		0x20
@@ -54,6 +56,18 @@ struct response_descriptor {
 	uint32_t response_info;
 	uint8_t data_type;
 } resp_desc;
+
+/* distance1    - 15 bits 
+	 distance2    - 15 bits
+	 angle_value1 - 5 bits
+	 angle_value2 - 5 bits */
+struct cabin_data {
+	uint8_t angle_value1;
+	uint8_t angle_value2;
+	uint16_t distance1;
+	uint16_t distance2;
+};
+
 
 /* Buffer for priting */
 static char print_buffer[MAX_PRINT_BUFFER_SIZE];
@@ -176,13 +190,11 @@ void LIDAR_process(void)
 	if (byte_count == (resp_desc.response_info & 0x3FFFFFFF) + LIDAR_RESP_DESC_SIZE) {
 		switch(lidar_request) {
 			case  LIDAR_REQ_SCAN:
+			case 	LIDAR_REQ_FORCE_SCAN:
 				LIDAR_RES_scan();
 				return;
 			case  LIDAR_REQ_EXPRESS_SCAN:
 				LIDAR_RES_express_scan();
-				return;
-			case  LIDAR_REQ_FORCE_SCAN:
-				LIDAR_RES_force_scan();
 				return;
 			case  LIDAR_REQ_GET_INFO:
 				LIDAR_RES_get_info();
@@ -314,7 +326,7 @@ void LIDAR_REQ_stop(void)
 	LIDAR_reset_print_buffer();
 	USB_reset_command();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_STOP);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_STOP);
 	LIDAR_send(print_buffer);
 	
 	/** Wait 1 ms. Decrementing in @see SysTick_Handler every 1 ms */
@@ -341,7 +353,7 @@ void LIDAR_REQ_reset(void)
 	LIDAR_reset_print_buffer();
 	USB_reset_command();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_RESET);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_RESET);
 	LIDAR_send(print_buffer);
 	
 	/** Wait 2 ms. Decrementing in @see SysTick_Handler every 1 ms */
@@ -366,7 +378,7 @@ void LIDAR_REQ_scan(void)
 	
 	LIDAR_reset_print_buffer();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_SCAN);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_SCAN);
 	LIDAR_send(print_buffer);
 }
 
@@ -382,23 +394,40 @@ void LIDAR_REQ_scan(void)
 	* RPLIDAR A1 series), this request will implement the same sampling rate as 
 	* the scan(SCAN) request.
 	*		Byte Order:		+0		Request Start Bit (0xA5)
-	*									+1		LIDAR_REQ_EXPRESS_SCAN (0x82)		
-	*									+2		working_mode (set to 0)
-	*									+3		reserved_field (set to 0)
+	*									+1		LIDAR_REQ_EXPRESS_SCAN (0x82)	
+	*									+2		Payload Size (0x5)
+	*									+3		working_mode (set to 0)
 	*									+4		reserved_field (set to 0)
 	*									+5		reserved_field (set to 0)
-	*									+6		reserved_field (set to 0)		
+	*									+6		reserved_field (set to 0)
+	*									+7		reserved_field (set to 0)	
+	*									+8		checksum = 0 XOR 0xA5 XOR CmdType XOR PayloadSize XOR 
+	* 											Payload[0] XOR ... XOR Payload[n]
 	* @return None
 	*/
 void LIDAR_REQ_express_scan(void)
 {
+	char working_mode = 0;
+	char reserved_fields = 0;
+	uint32_t payload_size = 0x5;
+	char checksum = 0 ^ LIDAR_START_BYTE ^ 
+										 LIDAR_REQ_EXPRESS_SCAN ^ payload_size;
+	
 	lidar_request = LIDAR_REQ_EXPRESS_SCAN;
 	byte_count = 0;
 	
 	LIDAR_reset_print_buffer();
-	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_EXPRESS_SCAN);
+	snprintf( print_buffer, MAX_PRINT_BUFFER_SIZE, 
+						"%c%c%c", LIDAR_START_BYTE, LIDAR_REQ_EXPRESS_SCAN, payload_size); 
 	LIDAR_send(print_buffer);
+	
+	/** @bug STM32 won't send these fields since they are set to 0 */
+	LIDAR_send(&working_mode);
+	LIDAR_send(&reserved_fields);
+	LIDAR_send(&reserved_fields);
+	LIDAR_send(&reserved_fields);
+	LIDAR_send(&reserved_fields);
+	LIDAR_send(&checksum);
 }
 
 
@@ -417,7 +446,7 @@ void LIDAR_REQ_force_scan(void)
 	
 	LIDAR_reset_print_buffer();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_FORCE_SCAN);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_FORCE_SCAN);
 	LIDAR_send(print_buffer);
 }
 
@@ -436,7 +465,7 @@ void LIDAR_REQ_get_info(void)
 	
 	LIDAR_reset_print_buffer();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_GET_INFO);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_GET_INFO);
 	LIDAR_send(print_buffer);
 }
 
@@ -456,7 +485,7 @@ void LIDAR_REQ_get_health(void)
 	
 	LIDAR_reset_print_buffer();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_GET_HEALTH);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_GET_HEALTH);
 	LIDAR_send(print_buffer);
 }
 
@@ -476,7 +505,7 @@ void LIDAR_REQ_get_samplerate(void)
 	
 	LIDAR_reset_print_buffer();
 	snprintf(print_buffer, MAX_PRINT_BUFFER_SIZE, 
-					 "%c%c", LIDAR_REQ_START_BIT, LIDAR_REQ_GET_SAMPLERATE);
+					 "%c%c", LIDAR_START_BYTE, LIDAR_REQ_GET_SAMPLERATE);
 	LIDAR_send(print_buffer);
 }
 
@@ -513,7 +542,7 @@ void LIDAR_RES_reset(void)
 
 
 /** 
-	* Process "SCAN" request's response
+	* Process "SCAN" or "FORCE SCAN" request's response
 	*		Byte Offset:	+0		quality, ~start, start
 	*		Order 8..0		+1		angle[6:0], check
 	*									+2		angle_q6[14:7]
@@ -558,25 +587,84 @@ void LIDAR_RES_scan(void)
 
 /** 
 	* Process "EXPRESS_SCAN" request's response
+	* 	Byte Offset:	+0		sync1 (0xA), checksum[3:0]
+	*		Order 8..0		+1		sync2 (0x5), checksum[7:4]
+	*									+2		start_angle_q6[7:0]
+	*									+3		start, start_angle_q6[14:8]
+	*									+4		cabin[0]
+	*									+9		cabin[1]
+	*												...
+	*									+79		cabin[15]
+	*	Cabin Bytes Offset:		+0		distance1[6:0], angle_val1[4] (sign)
+	*												+1		distance1[14:7]
+	*												+2		distance2[6:0], angle_val2[4] (sign)
+	*												+3		distance2[14:7]
+	*												+4		angle_val2[3:0], angle_val1[3:0]
 	* @return None
 	*/
 void LIDAR_RES_express_scan(void) 
-{ /* TODO */ }
-
-
-/** 
-	* Process "FORCE_SCAN" request's response
-	* @return None
-	*/
-void LIDAR_RES_force_scan(void) 
-{ /* TODO */ }
+{ 
+	uint8_t calc_checksum;
+	uint8_t PAYLOAD_SIZE=80, CABIN_COUNT=16, CABIN_START=4, CABIN_BYTE_COUNT=5;
+	uint16_t i, pos;
+	
+	uint8_t checksum = (DATA_RESPONSE[0] & 0x0F) | 
+											(((uint8_t)DATA_RESPONSE[1] & 0x0F) << 4);
+	uint16_t start_angle = DATA_RESPONSE[2] | 
+											(((uint8_t)DATA_RESPONSE[3] & 0x7F) << 8);
+	struct cabin_data cabins[CABIN_COUNT];
+	
+	/* Decrement byte count so next scan rewrites same DATA_RESPONSE bytes */
+	byte_count -= PAYLOAD_SIZE;
+	
+	/* Check if in sync */
+	if ((DATA_RESPONSE[0] >> 4) != 0xA)
+		return;
+	if ((DATA_RESPONSE[1] >> 4) != 0x5)
+		return;
+	
+	/* Check if data valid */
+	calc_checksum = 0 ^ LIDAR_START_BYTE ^ LIDAR_RES_BYTE ^ PAYLOAD_SIZE;
+	for (i=0; i<PAYLOAD_SIZE; i++)
+		calc_checksum = calc_checksum ^ DATA_RESPONSE[i];
+	if (checksum != calc_checksum) {
+		snprintf( print_buffer, MAX_PRINT_BUFFER_SIZE,
+							"Invalid checksum!\r\nGiven: %u\r\nCalculated: %u",
+							checksum, calc_checksum);
+		USB_send(print_buffer);
+		return;
+	}
+	
+	snprintf( print_buffer, MAX_PRINT_BUFFER_SIZE,
+						"{\"A\":%u,", start_angle);
+	USB_send(print_buffer);
+	
+	for (i=0; i<CABIN_COUNT; i++) {
+		pos = CABIN_START+(CABIN_BYTE_COUNT*i);
+		cabins[i].distance1 = ((uint8_t)DATA_RESPONSE[pos+0] >> 1) | 
+											((uint8_t)DATA_RESPONSE[pos+1] << 7);
+		cabins[i].distance2 = (DATA_RESPONSE[pos+2] >> 1) |
+											((uint8_t)DATA_RESPONSE[pos+3] << 7);
+		cabins[i].angle_value1 = (((uint8_t)DATA_RESPONSE[pos+0] & 0x1) << 4) |
+											((uint8_t)DATA_RESPONSE[pos+4] >> 4);
+		cabins[i].angle_value2 = (((uint8_t)DATA_RESPONSE[pos+2] & 0x1) << 4) |
+											(DATA_RESPONSE[pos+4] & 0x0F);
+		snprintf( print_buffer, MAX_PRINT_BUFFER_SIZE,
+							"\t{\"C[%u]\":{\"A1\":%u,\"A2\":%u,\"D1\":%u,\"D2\":%u}\r\n",
+							i, cabins[i].angle_value1, cabins[i].angle_value2,
+							cabins[i].distance1, cabins[i].distance2);
+		USB_send(print_buffer);
+	}	
+	
+	USB_send("}\r\n");
+}
 
 
 
 /**	
 	* Process "GET_INFO" request's response
 	*		Byte Offset:	+0		model
-	*		Order 8->0		+1		firmware_minor
+	*		Order 8..0		+1		firmware_minor
 	*									+2		firware_major
 	*									+3		hardware
 	*									+4		serial_number[0]
@@ -628,7 +716,7 @@ void LIDAR_RES_get_info(void)
 /**	
 	* Process "GET_HEALTH" request's response
 	*		Byte Offset:	+0		status
-	*		Order 8->0		+1		error_code[7:0]
+	*		Order 8..0		+1		error_code[7:0]
 	*									+2		error_code[15:8]	
 	* @return None
 	*/
@@ -665,7 +753,7 @@ void LIDAR_RES_get_health(void)
 /**	
 	* Process "GET_SAMPLERATE" request's response
 	*		Byte Offset:	+0		Tstandard[7:0]
-	*		Order 8->0		+1		Tstandard[15:8]
+	*		Order 8..0		+1		Tstandard[15:8]
 	*									+2		Texpress[7:0]
 	*									+3		Texpress[15:8]	
 	* @return None

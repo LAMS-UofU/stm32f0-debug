@@ -13,16 +13,7 @@
 #include "lidar.h"
 
 
-void reset_command(void);
-void process_message(void);
-
-void COMMAND_servo(int value);
-void COMMAND_help(void);
-
 void SystemClock_Config(void);
-
-extern struct usb_message command;
-extern int buffer_current_size;
 
 
 /**
@@ -38,7 +29,7 @@ int main(void)
 
 	LIDAR_init(); /* RPLIDAR A2M8 -- PB3 (PWM), PB10 (TX), PB11 (RX) */
 	SERVO_init(); /* SPT5435LV-180 servo -- PB4 (PWM)) */
-  USB_init(); 	/* COM3 -- BR: 115200 */
+  USB_init(); 	/* COM3 @ BR: 115200 -- PB6 (TX), PB7 (RX) */
 	
 	while (1)
   {
